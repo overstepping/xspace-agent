@@ -39,6 +39,13 @@ export interface X402Config {
   cdpUrl?: string
   cdpApiKeyId?: string
   cdpApiKeySecret?: string
+  /**
+   * Public base URL (scheme + host) advertised in the 402 `resource` field.
+   * If unset, falls back to `req.protocol://req.get('host')` (which only works
+   * when Express trust-proxy is set correctly). Set this when running behind
+   * a proxy that doesn't forward X-Forwarded-* headers (e.g. Codespaces).
+   */
+  publicBaseUrl?: string
 }
 
 export function loadX402ConfigFromEnv(): X402Config | null {
@@ -71,6 +78,7 @@ export function loadX402ConfigFromEnv(): X402Config | null {
     cdpUrl: process.env.X402_FACILITATOR_SOLANA ?? 'https://api.cdp.coinbase.com/platform/v2/x402/facilitator',
     cdpApiKeyId: process.env.CDP_API_KEY_ID,
     cdpApiKeySecret: process.env.CDP_API_KEY_SECRET,
+    publicBaseUrl: process.env.X402_PUBLIC_URL?.trim() || undefined,
   }
 }
 
@@ -120,6 +128,22 @@ function decodePaymentHeader(raw: string): PaymentPayload | null {
   }
 }
 
+export interface X402GateOptions {
+  /**
+   * Resolve a per-request override of `priceUsdc` and `description`. Useful for
+   * variable-amount routes (e.g. the prepaid wallet deposit endpoint, where
+   * the amount is taken from the request body).
+   * Return `null` from this to reject the request before payment is considered
+   * (the middleware will respond 400 with `reason`).
+   */
+  resolveRequirements?: (req: Request) =>
+    | { priceUsdc: string; description?: string }
+    | { reject: { status?: number; reason: string } }
+    | null
+  /** Side-effect hook fired exactly once after successful settlement. */
+  onSettled?: (req: Request, ctx: NonNullable<Request['x402']>) => void | Promise<void>
+}
+
 /**
  * Express middleware that gates a route behind an x402 payment.
  *
@@ -130,13 +154,32 @@ function decodePaymentHeader(raw: string): PaymentPayload | null {
  *      and call `next()`.
  *   3. Verification/settlement failure → respond 402 with the reason.
  */
-export function x402Gate(config: X402Config) {
+export function x402Gate(config: X402Config, options: X402GateOptions = {}) {
   const log = getAppLogger('x402')
   const facilitators = buildFacilitators(config)
 
   return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
-    const resourceUrl = `${req.protocol}://${req.get('host') ?? 'localhost'}${req.originalUrl}`
-    const requirements = buildRequirements(config, resourceUrl)
+    const resourceUrl = config.publicBaseUrl
+      ? `${config.publicBaseUrl.replace(/\/$/, '')}${req.originalUrl}`
+      : `${req.protocol}://${req.get('host') ?? 'localhost'}${req.originalUrl}`
+
+    let effectiveConfig = config
+    if (options.resolveRequirements) {
+      const resolved = options.resolveRequirements(req)
+      if (resolved && 'reject' in resolved) {
+        res.status(resolved.reject.status ?? 400).json({ error: resolved.reject.reason })
+        return
+      }
+      if (resolved) {
+        effectiveConfig = {
+          ...config,
+          priceUsdc: resolved.priceUsdc,
+          description: resolved.description ?? config.description,
+        }
+      }
+    }
+
+    const requirements = buildRequirements(effectiveConfig, resourceUrl)
 
     if (requirements.length === 0) {
       res.status(503).json({ error: 'x402 not configured (no recipients set)' })
@@ -216,6 +259,14 @@ export function x402Gate(config: X402Config) {
         }),
       ).toString('base64')
       res.setHeader('X-Payment-Response', responseHeader)
+
+      if (options.onSettled) {
+        try {
+          await options.onSettled(req, req.x402)
+        } catch (hookErr: any) {
+          log.error({ err: hookErr.message }, 'x402 onSettled hook failed')
+        }
+      }
 
       next()
     } catch (err: any) {

@@ -4,19 +4,18 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Ask the Agent</title>
-    <script
-      type="module"
-      src="https://cdn.three.ws/agent-3d/latest/agent-3d.js"
-      crossorigin="anonymous"
-    ></script>
     <link rel="stylesheet" href="./src/style.css" />
   </head>
   <body>
     <main id="stage">
-      <agent-3d
+      <iframe
         id="avatar"
-        body="https://cdn.three.ws/models/sample-avatar.glb"
-      ></agent-3d>
+        src="https://three.ws/agent-embed.html"
+        title="3D agent avatar"
+        loading="eager"
+        allow="autoplay; clipboard-write"
+        referrerpolicy="no-referrer-when-downgrade"
+      ></iframe>
 
       <section id="chat">
         <header>

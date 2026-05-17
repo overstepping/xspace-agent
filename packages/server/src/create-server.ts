@@ -41,6 +41,12 @@ import {
 } from './schemas'
 import { createBillingRouter } from './routes/billing'
 import { createAskRouter } from './routes/ask'
+import { createWalletRouter, loadWalletConfigFromEnv } from './routes/wallet'
+import {
+  AgentWalletLedger,
+  WalletSessionManager,
+  loadTreasuriesFromEnv,
+} from './wallet'
 import { createWebhookRouter } from './routes/webhooks'
 import { createMarketplaceRoutes } from './routes/marketplace'
 import { PersonalityLoader } from './personalities'
@@ -86,6 +92,9 @@ export function createServer(options: ServerOptions = {}): XSpaceServer {
   // -------------------------------------------------------------------------
 
   const app = express()
+  // Trust one proxy hop — needed for correct req.protocol / req.get('host')
+  // behind Railway, Cloud Run, Codespaces port-forwarding, etc.
+  app.set('trust proxy', 1)
   const server = http.createServer(app)
 
   // --- Security headers (CSP, X-Frame-Options, etc.) ---
@@ -94,13 +103,14 @@ export function createServer(options: ServerOptions = {}): XSpaceServer {
       contentSecurityPolicy: {
         directives: {
           defaultSrc: ["'self'"],
-          scriptSrc: ["'self'", "'unsafe-inline'", 'https://cdn.three.ws'],
+          scriptSrc: ["'self'", "'unsafe-inline'"],
           styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
           fontSrc: ["'self'", 'https://fonts.gstatic.com'],
-          connectSrc: ["'self'", 'wss:', 'ws:', 'https://cdn.three.ws'],
+          connectSrc: ["'self'", 'wss:', 'ws:'],
           imgSrc: ["'self'", 'data:', 'https:'],
           mediaSrc: ["'self'", 'data:', 'blob:'],
           workerSrc: ["'self'", 'blob:'],
+          frameSrc: ["'self'", 'https://three.ws'],
         },
       },
       crossOriginEmbedderPolicy: false,
@@ -479,8 +489,43 @@ export function createServer(options: ServerOptions = {}): XSpaceServer {
   // --- Billing + subscription management ---
   app.use('/api/billing', createBillingRouter())
 
-  // --- x402 pay-per-question endpoint (Solana + EVM micropayments) ---
-  app.use('/api/ask', createAskRouter({ state, io }))
+  // --- Prepaid agent wallet (custodial, balance-based) ----------------------
+  // The wallet stays "off" unless a session secret is configured. The same
+  // ledger powers both /api/wallet/* and the prepaid path of /api/ask.
+  const walletSecret = process.env.WALLET_SESSION_SECRET || ''
+  let walletLedger: AgentWalletLedger | undefined
+  let walletSessions: WalletSessionManager | undefined
+  if (walletSecret && walletSecret.length >= 16) {
+    walletLedger = new AgentWalletLedger({ dataDir: process.env.WALLET_DATA_DIR })
+    walletSessions = new WalletSessionManager({ secret: walletSecret })
+    walletLedger
+      .init()
+      .catch((err) => log.error({ err: err.message }, 'wallet ledger init failed'))
+    walletSessions.start()
+    app.use(
+      '/api/wallet',
+      createWalletRouter({
+        ledger: walletLedger,
+        sessions: walletSessions,
+        walletConfig: loadWalletConfigFromEnv(),
+        treasuries: loadTreasuriesFromEnv(),
+      }),
+    )
+    log.info('prepaid agent wallet enabled at /api/wallet')
+  } else {
+    log.warn('WALLET_SESSION_SECRET not set (or < 16 chars) — prepaid wallet disabled')
+  }
+
+  // --- x402 pay-per-question endpoint (per-request OR prepaid debit) -------
+  app.use(
+    '/api/ask',
+    createAskRouter({
+      state,
+      io,
+      ledger: walletLedger,
+      sessions: walletSessions,
+    }),
+  )
 
   // --- Marketplace routes ---
   app.use(createMarketplaceRoutes())
