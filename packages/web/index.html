@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Ask the Agent</title>
+    <script
+      type="module"
+      src="https://cdn.three.ws/agent-3d/latest/agent-3d.js"
+      crossorigin="anonymous"
+    ></script>
+    <link rel="stylesheet" href="./src/style.css" />
+  </head>
+  <body>
+    <main id="stage">
+      <agent-3d
+        id="avatar"
+        body="https://cdn.three.ws/models/sample-avatar.glb"
+      ></agent-3d>
+
+      <section id="chat">
+        <header>
+          <h1>Ask the Agent</h1>
+          <button id="connect" type="button">Connect wallet</button>
+          <span id="wallet-status" hidden></span>
+        </header>
+
+        <ol id="transcript" aria-live="polite"></ol>
+
+        <form id="ask-form">
+          <input
+            id="question"
+            name="question"
+            type="text"
+            placeholder="Ask anything — $0.01 USDC per question"
+            autocomplete="off"
+            maxlength="500"
+            required
+          />
+          <button id="send" type="submit">Ask ($0.01)</button>
+        </form>
+
+        <p id="hint">
+          You'll be asked to sign a small USDC payment in Phantom (Solana) or
+          MetaMask (Base). The agent answers in voice + text.
+        </p>
+      </section>
+    </main>
+    <script type="module" src="./src/main.ts"></script>
+  </body>
+</html>

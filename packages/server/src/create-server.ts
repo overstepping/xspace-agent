@@ -94,11 +94,13 @@ export function createServer(options: ServerOptions = {}): XSpaceServer {
       contentSecurityPolicy: {
         directives: {
           defaultSrc: ["'self'"],
-          scriptSrc: ["'self'", "'unsafe-inline'"],
+          scriptSrc: ["'self'", "'unsafe-inline'", 'https://cdn.three.ws'],
           styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
           fontSrc: ["'self'", 'https://fonts.gstatic.com'],
-          connectSrc: ["'self'", 'wss:', 'ws:'],
+          connectSrc: ["'self'", 'wss:', 'ws:', 'https://cdn.three.ws'],
           imgSrc: ["'self'", 'data:', 'https:'],
+          mediaSrc: ["'self'", 'data:', 'blob:'],
+          workerSrc: ["'self'", 'blob:'],
         },
       },
       crossOriginEmbedderPolicy: false,
@@ -230,6 +232,10 @@ export function createServer(options: ServerOptions = {}): XSpaceServer {
       if (/\.html$/i.test(p)) res.setHeader('Cache-Control', 'no-store')
     },
   }))
+  // Public x402 ask page (3D avatar + chat) — built by packages/web/.
+  app.get(['/ask', '/ask/'], (_req, res) => {
+    res.sendFile(path.join(publicDir, 'ask', 'index.html'))
+  })
   // Stripe webhooks must receive the raw body BEFORE express.json() strips it.
   app.use('/webhooks', createWebhookRouter())
 
